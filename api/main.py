@@ -1,23 +1,28 @@
-"""FastAPI service: submit / status / result. No worker yet (Phase 2)."""
+"""FastAPI service: submit / status / result. Now enqueues to arq (Phase 3)."""
 import os
 import uuid
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Response, status
 from redis.asyncio import Redis
+from arq import create_pool
 
 from .models import SubmitJobRequest, SubmitJobResponse, JobRecord, JobStatus
 from . import store
+from worker.settings import redis_settings
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis: Redis | None = None
+arq_pool = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global redis
+    global redis, arq_pool
     redis = Redis.from_url(redis_url, decode_responses=True)
+    arq_pool = await create_pool(redis_settings())
     yield
     await redis.aclose()
+    await arq_pool.aclose()
 
 
 app = FastAPI(title="Job Processing Service", lifespan=lifespan)
@@ -36,7 +41,14 @@ async def health() -> dict:
 async def submit_job(req: SubmitJobRequest, response: Response) -> SubmitJobResponse:
     job_id = uuid.uuid4().hex
     await store.create_job(redis, job_id)
-    # NOTE: no enqueue yet — Phase 3 wires the worker. Job stays "queued".
+    await arq_pool.enqueue_job(
+        "process_job",
+        job_id,
+        req.image_url,
+        req.width,
+        req.height,
+        _job_id=job_id,
+    )
     status_url = f"/jobs/{job_id}"
     response.headers["Location"] = status_url
     return SubmitJobResponse(
@@ -66,7 +78,6 @@ async def get_result(job_id: str):
             status_code=422,
             detail={"status": record.status, "error": record.error},
         )
-    # Not done yet: 202 + Retry-After tells the client to poll again.
     return Response(
         content=f'{{"job_id":"{job_id}","status":"{record.status.value}"}}',
         media_type="application/json",
