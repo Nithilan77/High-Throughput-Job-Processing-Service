@@ -20,3 +20,14 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    command: ["arq", "worker.worker.WorkerSettings"]
+    environment:
+      REDIS_URL: "redis://redis:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
