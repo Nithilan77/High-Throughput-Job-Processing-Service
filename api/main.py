@@ -19,6 +19,11 @@ from .ratelimit import RateLimiter
 from .ratelimit import RateLimiter
 from worker import retry as retrypolicy
 
+from worker import retry as retrypolicy
+from . import metrics
+from fastapi.responses import PlainTextResponse
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
 redis: Redis | None = None
 arq_pool = None
@@ -53,6 +58,7 @@ async def submit_job(
 ) -> SubmitJobResponse:
     allowed, tokens, retry_after = await limiter.allow(api_key)
     if not allowed:
+        metrics.rate_limited.inc()
         raise HTTPException(
             status_code=429,
             detail="rate limit exceeded",
@@ -78,6 +84,7 @@ async def submit_job(
     # immediately as a completed job and skip the worker entirely.
     cached = await cache.get_cached(redis, req.image_url, req.width, req.height)
     if cached is not None:
+        metrics.cache_hits.inc()
         await store.create_job(redis, job_id)
         await store.update_job(
             redis, job_id, status=JobStatus.COMPLETED, result=cached
@@ -93,11 +100,22 @@ async def submit_job(
     await arq_pool.enqueue_job(
         "process_job", job_id, req.image_url, req.width, req.height, _job_id=job_id
     )
+    metrics.jobs_submitted.inc()
     response.status_code = status.HTTP_202_ACCEPTED
     response.headers["Location"] = f"/jobs/{job_id}"
     return SubmitJobResponse(
         job_id=job_id, status=JobStatus.QUEUED, status_url=f"/jobs/{job_id}"
     )
+
+@app.get("/metrics")
+async def get_metrics():
+    # Sample queue depth at scrape time from the arq queue list.
+    try:
+        depth = await redis.llen("arq:queue")
+        metrics.queue_depth.set(depth)
+    except Exception:
+        pass
+    return PlainTextResponse(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 @app.get("/dlq")
 async def get_dlq(limit: int = 100):

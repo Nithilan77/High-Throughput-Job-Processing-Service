@@ -8,7 +8,10 @@ from api.models import JobStatus
 from worker.settings import redis_settings, REDIS_URL
 from worker.tasks import generate_thumbnail
 from worker import retry as retrypolicy
-
+from worker import retry as retrypolicy
+from api import metrics
+from prometheus_client import start_http_server
+import time as _time
 
 class TransientError(Exception):
     """Raised to signal a retryable failure."""
@@ -38,7 +41,13 @@ async def process_job(ctx, job_id: str, image_url: str, width: int, height: int)
 
         result = generate_thumbnail(image_bytes, width, height)
         await cache.set_cached(redis, image_url, width, height, result)
-        await store.update_job(redis, job_id, status=JobStatus.COMPLETED, result=result)
+        record = await store.update_job(
+            redis, job_id, status=JobStatus.COMPLETED, result=result
+        )
+        # End-to-end latency: submission (created_at) -> now.
+        if record is not None:
+            metrics.job_latency.observe(max(0.0, _time.time() - record.created_at))
+        metrics.jobs_completed.inc()
         return result
 
     except Exception as exc:
@@ -57,11 +66,13 @@ async def process_job(ctx, job_id: str, image_url: str, width: int, height: int)
             redis, job_id, status=JobStatus.FAILED,
             error=f"failed after {attempt} attempts: {exc}",
         )
+        metrics.jobs_failed.inc()
         return {"status": "failed", "error": str(exc)}
 
 
 async def startup(ctx) -> None:
     ctx["app_redis"] = Redis.from_url(REDIS_URL, decode_responses=True)
+    start_http_server(9100)
 
 
 async def shutdown(ctx) -> None:

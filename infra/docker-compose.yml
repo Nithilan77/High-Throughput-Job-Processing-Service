@@ -32,6 +32,8 @@ services:
       REDIS_URL: "redis://redis:6379"
       JOB_MAX_TRIES: "3"
       JOB_BACKOFF_BASE: "1.0"
+    ports:
+      - "9100:9100"
     depends_on:
       redis:
         condition: service_healthy
