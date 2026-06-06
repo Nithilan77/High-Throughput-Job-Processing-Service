@@ -17,8 +17,8 @@ services:
       - "8000:8000"
     environment:
       REDIS_URL: "redis://redis:6379"
-      RATE_LIMIT_CAPACITY: "1000"
-      RATE_LIMIT_REFILL: "500"
+      RATE_LIMIT_CAPACITY: "100000"
+      RATE_LIMIT_REFILL: "50000"
     depends_on:
       redis:
         condition: service_healthy
