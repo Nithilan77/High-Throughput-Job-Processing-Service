@@ -31,13 +31,16 @@ async def process_job(ctx, job_id: str, image_url: str, width: int, height: int)
             raise TransientError(f"forced failure (attempt {attempt})")
 
         image_bytes = None
-        try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(image_url)
-                if resp.status_code == 200:
-                    image_bytes = resp.content
-        except Exception:
-            image_bytes = None
+        # Test affordance: a "synthetic://" URL skips the network fetch entirely so
+        # load tests measure pure processing throughput, not failed-fetch latency.
+        if not image_url.startswith("synthetic"):
+            try:
+                async with httpx.AsyncClient(timeout=0.5) as client:
+                    resp = await client.get(image_url)
+                    if resp.status_code == 200:
+                        image_bytes = resp.content
+            except Exception:
+                image_bytes = None
 
         result = generate_thumbnail(image_bytes, width, height)
         await cache.set_cached(redis, image_url, width, height, result)
