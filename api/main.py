@@ -117,9 +117,9 @@ async def get_stats():
 
 @app.get("/metrics")
 async def get_metrics():
-    # Sample queue depth at scrape time from the arq queue list.
+    # Sample queue depth at scrape time. arq's queue is a sorted set (zset).
     try:
-        depth = await redis.llen("arq:queue")
+        depth = await redis.zcard("arq:queue")
         metrics.queue_depth.set(depth)
     except Exception:
         pass
