@@ -1,24 +1,24 @@
 """The actual unit of work: generate a thumbnail.
 
-We try to fetch the source image, but fall back to synthesizing one if the
-fetch fails. Either way the worker does real CPU work (decode/resize/encode),
-which keeps load tests free of external-network dependence.
+We try to fetch the source image, but fall back to a fast synthetic image if
+the fetch fails. Either way the worker does real image work (decode/resize/
+encode via Pillow), which is the representative cost we want to measure.
 """
 import base64
 import io
 from PIL import Image
 
 
-def _make_synthetic_image(seed: int = 0) -> Image.Image:
-    img = Image.new("RGB", (512, 512))
-    px = img.load()
-    for y in range(512):
-        for x in range(0, 512, 4):
-            v = (x + y + seed) % 256
-            for dx in range(4):
-                if x + dx < 512:
-                    px[x + dx, y] = (v, (v * 2) % 256, (v * 3) % 256)
-    return img
+def _make_synthetic_image() -> Image.Image:
+    """Fast synthetic source image.
+
+    Uses Pillow's C-accelerated gradient/resize instead of a Python pixel
+    loop, so the measured cost is the resize+encode (the real work), not
+    synthetic-image construction.
+    """
+    base = Image.linear_gradient("L")          # 256x256 grayscale gradient (C)
+    img = Image.merge("RGB", (base, base.rotate(90), base.rotate(180)))
+    return img.resize((1024, 1024))            # realistic source size (C-level)
 
 
 def generate_thumbnail(image_bytes: bytes | None, width: int, height: int) -> dict:
@@ -37,6 +37,4 @@ def generate_thumbnail(image_bytes: bytes | None, width: int, height: int) -> di
         "original_size": list(original_size),
         "thumbnail_size": list(img.size),
         "thumbnail_b64_len": len(encoded),
-        # Store length, not the blob, to keep Redis lean; a real system would
-        # push the blob to object storage and store a URL here.
     }
