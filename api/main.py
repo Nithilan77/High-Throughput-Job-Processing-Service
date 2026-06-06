@@ -107,6 +107,14 @@ async def submit_job(
         job_id=job_id, status=JobStatus.QUEUED, status_url=f"/jobs/{job_id}"
     )
 
+@app.get("/stats")
+async def get_stats():
+    """Aggregate processing stats across ALL workers (shared Redis counter)."""
+    completed = await redis.get("stats:completed_total")
+    # arq stores its queue as a sorted set (zset), so use ZCARD, not LLEN.
+    depth = await redis.zcard("arq:queue")
+    return {"completed_total": int(completed or 0), "queue_depth": depth}
+
 @app.get("/metrics")
 async def get_metrics():
     # Sample queue depth at scrape time from the arq queue list.

@@ -48,6 +48,7 @@ async def process_job(ctx, job_id: str, image_url: str, width: int, height: int)
         if record is not None:
             metrics.job_latency.observe(max(0.0, _time.time() - record.created_at))
         metrics.jobs_completed.inc()
+        await redis.incr("stats:completed_total")
         return result
 
     except Exception as exc:
